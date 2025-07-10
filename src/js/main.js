@@ -52,4 +52,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     animate();
+
+    const resetBtn = document.createElement('button');
+    resetBtn.id = 'reset-game';
+    resetBtn.textContent = 'Сбросить игру';
+    resetBtn.style.margin = '10px';
+    document.body.appendChild(resetBtn);
+    resetBtn.addEventListener('click', () => {
+        if (window.okeyGameInstance) {
+            window.okeyGameInstance.initializeGame();
+        }
+    });
+    // Сохранить ссылку на экземпляр игры для сброса
+    window.okeyGameInstance = game;
 }); 

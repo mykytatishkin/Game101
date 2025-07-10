@@ -338,24 +338,30 @@ class OkeyGame {
     botMove() {
         const bot = this.players[this.currentPlayerIndex];
         if (!bot) return;
-        // 1. Найти все валидные комбинации
-        let combinations = this.findValidCombinations(bot.tiles);
-        let usedIndexes = new Set();
-        let playedCombinations = [];
-        // 2. Выложить все возможные комбинации (по 3+ фишки)
-        combinations.forEach(comb => {
-            if (comb.length >= 3) {
-                playedCombinations.push(comb);
-                comb.forEach(tile => usedIndexes.add(bot.tiles.indexOf(tile)));
-            }
-        });
-        // 3. Удалить выложенные фишки из руки
-        if (playedCombinations.length > 0) {
-            playedCombinations.forEach(comb => {
-                this.table.push(comb);
-            });
-            // Удаляем фишки из руки
-            bot.tiles = bot.tiles.filter((tile, idx) => !usedIndexes.has(idx));
+        // 1. Найти все валидные комбинации (по 3+ фишки)
+        let combinations = this.findValidCombinations(bot.tiles).filter(comb => comb.length >= 3);
+        // 2. Проверить, можно ли выиграть (если выложить все комбинации, не останется фишек)
+        let allTilesInCombs = new Set();
+        combinations.forEach(comb => comb.forEach(tile => allTilesInCombs.add(tile)));
+        let canWin = (combinations.length > 0 && bot.tiles.length === allTilesInCombs.size);
+        if (canWin) {
+            // Выложить все комбинации
+            combinations.forEach(comb => this.table.push(comb));
+            bot.tiles = [];
+            bot.hasInitialMeld = true;
+            this.winner = this.currentPlayerIndex;
+            this.updateScores();
+            setTimeout(() => alert(`Победитель: ${bot.name}!`), 100);
+            return;
+        }
+        // 3. Если нельзя выиграть — выложить только одну (самую длинную) комбинацию
+        let bestComb = null;
+        if (combinations.length > 0) {
+            bestComb = combinations.reduce((a, b) => (a.length >= b.length ? a : b));
+        }
+        if (bestComb) {
+            this.table.push(bestComb);
+            bot.tiles = bot.tiles.filter(tile => !bestComb.includes(tile));
             bot.hasInitialMeld = true;
         }
         // 4. Если у бота не осталось фишек — победа
@@ -920,31 +926,31 @@ class OkeyGame {
     }
 
     drawTable() {
-        const tableY = this.canvas.height / 2 - 100;
+        // Увеличить ширину зоны для карт и добавить перенос
+        const tableY = this.canvas.height / 2 - 150;
         const tileHeight = 50;
         const tileWidth = 35;
         const padding = 10;
-        let currentX = this.canvas.width * 0.2;
+        let currentX = this.canvas.width * 0.05;
         let currentY = tableY;
-        const tableAreaWidth = this.canvas.width * 0.6;
-
-
+        const tableAreaWidth = this.canvas.width * 0.9;
+        const maxRowWidth = tableAreaWidth;
         this.ctx.save();
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
         this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
         this.ctx.lineWidth = 1;
+        // Оставить только одну большую зону:
         this.ctx.beginPath();
-        this.ctx.roundRect(currentX - padding, tableY - padding, tableAreaWidth + padding * 2, tileHeight * 2 + padding * 4, 10);
+        this.ctx.roundRect(currentX - padding, tableY - padding, tableAreaWidth + padding * 2, tileHeight * 4 + padding * 8, 16);
         this.ctx.fill();
         this.ctx.stroke();
-
-
+        // Удалить/закомментировать все лишние прямоугольники/линии внутри drawTable
         this.table.forEach((combination, combIdx) => {
-            if (currentX + (combination.length * (tileWidth + 5)) > this.canvas.width * 0.8 - padding) {
-                currentX = this.canvas.width * 0.2;
-                currentY += tileHeight + padding;
+            // Если не помещается — перенос на новую строку
+            if (currentX + (combination.length * (tileWidth + 5)) > this.canvas.width * 0.95 - padding) {
+                currentX = this.canvas.width * 0.05;
+                currentY += tileHeight + padding * 2;
             }
-
             combination.forEach((tile, tileIdx) => {
                 this.drawTile(
                     tile,
@@ -956,10 +962,8 @@ class OkeyGame {
                     this.selectedTableSet === combIdx
                 );
             });
-
             currentX += combination.length * (tileWidth + 5) + padding;
         });
-
         this.ctx.restore();
     }
 

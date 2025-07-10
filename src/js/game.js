@@ -26,6 +26,10 @@ class OkeyGame {
         this.openTile = null;
         this.jokerTile = null;
         
+        // Кэш для стопок карт
+        this.tileStackCache = new Map();
+        this.lastPlayerTileCounts = [0, 0, 0, 0];
+        
         // Создаем начальных игроков
         for (let i = 0; i < 4; i++) {
             this.players[i] = {
@@ -42,12 +46,30 @@ class OkeyGame {
         // Устанавливаем обработчики событий
         this.resizeCanvas();
         window.addEventListener('resize', () => this.resizeCanvas());
-        this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        this._throttledMouseMove = this._throttle(this.handleMouseMove.bind(this), 33); // ~30 FPS
+        this.canvas.addEventListener('mousemove', this._throttledMouseMove);
         this.canvas.addEventListener('mouseleave', () => this.clearHover());
         this.canvas.addEventListener('click', (e) => this.handleTileClick(e));
         
         // Обновляем элементы управления
         this.updateControls();
+        this._lastCombinationTiles = null;
+        this._lastCombinationHover = null;
+        this._lastCombinationResult = null;
+        this._lastTilesString = null;
+        this._lastAllCombs = null;
+    }
+
+    // Throttle helper
+    _throttle(fn, ms) {
+        let last = 0;
+        return function(...args) {
+            const now = performance.now();
+            if (now - last > ms) {
+                last = now;
+                fn.apply(this, args);
+            }
+        };
     }
 
     initializeGame() {
@@ -75,6 +97,9 @@ class OkeyGame {
         this.selectedTableSet = null;
         this.selectedDiscard = null;
         this.isDiscarding = false;
+        
+        // Очищаем кэш стопок карт
+        this.clearTileStackCache();
         
         // Распределяем фишки
         this.distributeTiles();
@@ -130,13 +155,13 @@ class OkeyGame {
 
     distributeTiles() {
         // Отделяем резервные фишки
-        this.reservePile = this.tiles.slice(56);
-        this.tiles = this.tiles.slice(0, 56);
+        this.reservePile = this.tiles.slice(106);
+        this.tiles = this.tiles.slice(0, 106);
         
-        // Распределяем фишки игрокам
+        // Распределяем фишки игрокам: игрок 22, остальные по 21
         for (let i = 0; i < 4; i++) {
-            const tilesCount = i === 0 ? 15 : 14;
-            const startIndex = i === 0 ? 0 : 15 + (i - 1) * 14;
+            const tilesCount = i === 0 ? 22 : 21;
+            const startIndex = i === 0 ? 0 : 22 + (i - 1) * 21;
             this.players[i].tiles = this.tiles.slice(startIndex, startIndex + tilesCount);
         }
     }
@@ -474,6 +499,9 @@ class OkeyGame {
         
         this.tileRects = [];
 
+        // Проверяем изменения в количестве карт у игроков
+        this.checkPlayerTileCountChanges();
+
         // Очищаем canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
@@ -515,6 +543,24 @@ class OkeyGame {
         }
     }
 
+    checkPlayerTileCountChanges() {
+        if (!this.players || this.players.length === 0) return;
+        
+        // Проверяем изменения в количестве карт
+        for (let i = 0; i < this.players.length; i++) {
+            const currentCount = this.players[i] ? this.players[i].tiles.length : 0;
+            if (currentCount !== this.lastPlayerTileCounts[i]) {
+                // Очищаем кэш для этого количества карт
+                this.clearTileStackCache();
+                this.lastPlayerTileCounts[i] = currentCount;
+            }
+        }
+    }
+
+    clearTileStackCache() {
+        this.tileStackCache.clear();
+    }
+
     drawPlayerTiles(player, index) {
         if (!player || !player.tiles) return;
 
@@ -525,23 +571,10 @@ class OkeyGame {
         this.ctx.save();
         const isCurrentPlayer = index === this.currentPlayerIndex;
 
-        // --- Highlight logic for hovered tile ---
         let possibleCombinationTileIndexes = [];
         if (index === 0 && typeof this.lastHoveredTileIndex === 'number' && this.lastHoveredTileIndex >= 0) {
-            const hoveredTile = player.tiles[this.lastHoveredTileIndex];
-            const allCombs = this.findValidCombinations(player.tiles);
-            allCombs.forEach(comb => {
-                if (comb.includes(hoveredTile)) {
-                    comb.forEach(tile => {
-                        const idx = player.tiles.indexOf(tile);
-                        if (idx !== -1 && !possibleCombinationTileIndexes.includes(idx)) {
-                            possibleCombinationTileIndexes.push(idx);
-                        }
-                    });
-                }
-            });
+            possibleCombinationTileIndexes = this._lastCombinationResult || [];
         }
-        // --- End highlight logic ---
 
         switch (index) {
             case 0: { // Bottom player (human)
@@ -575,21 +608,21 @@ class OkeyGame {
                 break;
             }
             case 1: { // Right player (горизонтально)
-                const rackWidth = player.tiles.length * (tileWidth + 5) - 5;
+                const rackWidth = tileWidth + 20; // Фиксированная ширина для стопки
                 const x = this.canvas.width - rackWidth - padding;
                 const y = (this.canvas.height - tileHeight) / 2;
                 this.drawBotRack(player.name, isCurrentPlayer, player.tiles.length, rackWidth, x, y);
                 break;
             }
             case 2: { // Top player (горизонтально)
-                const rackWidth = player.tiles.length * (tileWidth + 5) - 5;
+                const rackWidth = tileWidth + 20; // Фиксированная ширина для стопки
                 const x = (this.canvas.width - rackWidth) / 2;
                 const y = padding + 30;
                 this.drawBotRack(player.name, isCurrentPlayer, player.tiles.length, rackWidth, x, y);
                 break;
             }
             case 3: { // Left player (горизонтально)
-                const rackWidth = player.tiles.length * (tileWidth + 5) - 5;
+                const rackWidth = tileWidth + 20; // Фиксированная ширина для стопки
                 const x = padding;
                 const y = (this.canvas.height - tileHeight) / 2;
                 this.drawBotRack(player.name, isCurrentPlayer, player.tiles.length, rackWidth, x, y);
@@ -616,10 +649,68 @@ class OkeyGame {
         this.ctx.font = 'bold 16px Arial';
         this.ctx.textAlign = 'center';
         this.ctx.fillText(name, x + rackWidth / 2, y - 20);
-        // Фишки
-        for (let i = 0; i < tileCount; i++) {
-            this.drawTileBack(x + i * (tileWidth + 5), y, tileWidth, tileHeight);
+        // Отрисовываем стопку карт вместо отдельных карт
+        this.drawTileStack(x, y, tileWidth, tileHeight, tileCount);
+        this.ctx.restore();
+    }
+
+    drawTileStack(x, y, width, height, count) {
+        this.ctx.save();
+        
+        // Проверяем кэш
+        const cacheKey = `${count}_${width}_${height}`;
+        let cachedImage = this.tileStackCache.get(cacheKey);
+        
+        if (!cachedImage) {
+            // Создаем временный canvas для кэширования
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = width + 20; // Дополнительное место для смещения
+            tempCanvas.height = height + 20;
+            
+            // Рисуем стопку карт как единое целое
+            const stackOffset = 2; // Уменьшенное смещение для более компактной стопки
+            const maxVisibleCards = Math.min(count, 4); // Максимум 4 карты видно в стопке
+            
+            // Рисуем карты снизу вверх для правильного наложения
+            for (let i = maxVisibleCards - 1; i >= 0; i--) {
+                const offsetX = i * stackOffset;
+                const offsetY = i * stackOffset;
+                
+                // Фон рубашки
+                tempCtx.fillStyle = '#e0e0e0';
+                tempCtx.strokeStyle = '#999';
+                tempCtx.lineWidth = 1;
+                
+                // Рисуем рубашку
+                tempCtx.beginPath();
+                tempCtx.roundRect(offsetX, offsetY, width, height, 5);
+                tempCtx.fill();
+                tempCtx.stroke();
+                
+                // Узор на рубашке (только для верхней карты)
+                if (i === 0) {
+                    tempCtx.strokeStyle = '#ccc';
+                    tempCtx.lineWidth = 1;
+                    
+                    // Диагональные линии (упрощенный узор для производительности)
+                    for (let j = 0; j < width; j += 6) {
+                        tempCtx.beginPath();
+                        tempCtx.moveTo(offsetX + j, offsetY);
+                        tempCtx.lineTo(offsetX + j - height/2, offsetY + height/2);
+                        tempCtx.stroke();
+                    }
+                }
+            }
+            
+            // Сохраняем в кэш
+            this.tileStackCache.set(cacheKey, tempCanvas);
+            cachedImage = tempCanvas;
         }
+        
+        // Рисуем кэшированное изображение
+        this.ctx.drawImage(cachedImage, x - 10, y - 10);
+        
         this.ctx.restore();
     }
 
@@ -743,7 +834,40 @@ class OkeyGame {
         }
         if(this.lastHoveredTileIndex !== newHoveredIndex) {
             this.lastHoveredTileIndex = newHoveredIndex;
+            // Обновляем кэш комбинаций только если изменился hoveredTile
+            this._updateCombinationCache();
             this.draw();
+        }
+    }
+
+    _updateCombinationCache() {
+        // Кэшируем комбинации только если изменились tiles или hoveredTile
+        const player = this.players[0];
+        if (!player || !player.tiles) return;
+        const tilesKey = JSON.stringify(player.tiles);
+        if (this._lastCombinationTiles !== tilesKey || this._lastCombinationHover !== this.lastHoveredTileIndex) {
+            // Кэшируем все комбинации для текущих tiles
+            if (this._lastTilesString !== tilesKey) {
+                this._lastAllCombs = this.findValidCombinations(player.tiles);
+                this._lastTilesString = tilesKey;
+            }
+            let indexes = [];
+            if (typeof this.lastHoveredTileIndex === 'number' && this.lastHoveredTileIndex >= 0) {
+                const hoveredTile = player.tiles[this.lastHoveredTileIndex];
+                this._lastAllCombs.forEach(comb => {
+                    if (comb.includes(hoveredTile)) {
+                        comb.forEach(tile => {
+                            const idx = player.tiles.indexOf(tile);
+                            if (idx !== -1 && !indexes.includes(idx)) {
+                                indexes.push(idx);
+                            }
+                        });
+                    }
+                });
+            }
+            this._lastCombinationTiles = tilesKey;
+            this._lastCombinationHover = this.lastHoveredTileIndex;
+            this._lastCombinationResult = indexes;
         }
     }
 
@@ -791,7 +915,7 @@ class OkeyGame {
         
         if (this.currentPlayerIndex === 0) {
             // Показываем кнопки взятия фишек только в начале хода
-            const hasDrawnTile = this.players[0].tiles.length > (this.currentPlayerIndex === 0 ? 15 : 14);
+            const hasDrawnTile = this.players[0].tiles.length > (this.currentPlayerIndex === 0 ? 22 : 21);
             
             if (!hasDrawnTile) {
                 this.showDrawOptions();

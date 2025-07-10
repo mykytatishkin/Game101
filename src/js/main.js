@@ -38,9 +38,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Animation loop
+    // Animation loop with throttling for better performance
+    let lastDrawTime = 0;
+    const drawInterval = 1000 / 30; // 30 FPS max
+    
     function animate() {
-        game.draw();
+        const currentTime = performance.now();
+        if (currentTime - lastDrawTime >= drawInterval) {
+            game.draw();
+            lastDrawTime = currentTime;
+        }
         requestAnimationFrame(animate);
     }
     
